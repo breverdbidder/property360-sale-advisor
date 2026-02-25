@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { PHASES, type Phase } from "@/lib/phases";
 
 const C = {
@@ -501,6 +501,41 @@ function InsightsTab({ checked, docs }: { checked: Set<string>; docs: UploadedDo
   );
 }
 
+// ─── URL STATE ────────────────────────────────────────────────────────────────
+function serializeState(
+  checked: Set<string>,
+  aiSuggested: Map<string, { confidence: number; value: string | null; docName: string }>
+): string {
+  try {
+    const data = {
+      c: Array.from(checked),
+      a: Object.fromEntries(
+        Array.from(aiSuggested.entries()).map(([k, v]) => [k, [v.confidence, v.value, v.docName]])
+      ),
+    };
+    return btoa(encodeURIComponent(JSON.stringify(data)));
+  } catch { return ""; }
+}
+
+function deserializeState(hash: string): {
+  checked: Set<string>;
+  aiSuggested: Map<string, { confidence: number; value: string | null; docName: string }>;
+} | null {
+  try {
+    const raw = decodeURIComponent(atob(hash));
+    const data = JSON.parse(raw) as {
+      c?: string[];
+      a?: Record<string, [number, string | null, string]>;
+    };
+    const checked = new Set<string>(data.c || []);
+    const aiSuggested = new Map<string, { confidence: number; value: string | null; docName: string }>();
+    for (const [k, v] of Object.entries(data.a || {})) {
+      aiSuggested.set(k, { confidence: v[0], value: v[1], docName: v[2] });
+    }
+    return { checked, aiSuggested };
+  } catch { return null; }
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function SaleAdvisor() {
   const [activeTab, setActiveTab] = useState<TabId>("checklist");
@@ -516,6 +551,20 @@ export default function SaleAdvisor() {
     const id = Math.random().toString(36).slice(2);
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4500);
+  }, []);
+
+  // Restore state from URL hash on mount
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash.length > 10) {
+      const restored = deserializeState(hash);
+      if (restored) {
+        setChecked(restored.checked);
+        setAiSuggested(restored.aiSuggested);
+        addToast(`🔗 Restored ${restored.checked.size} items from shared link`, "success");
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggle = useCallback((id: string) => {
@@ -655,6 +704,19 @@ export default function SaleAdvisor() {
     docs.filter(d => d.status === "done" && !d.applied).forEach(d => applyDoc(d.id));
   }, [docs, applyDoc]);
 
+  const handleShare = useCallback(() => {
+    const hash = serializeState(checked, aiSuggested);
+    if (!hash) { addToast("Nothing to share yet — check some items first", "warning"); return; }
+    const url = `${window.location.origin}${window.location.pathname}#${hash}`;
+    navigator.clipboard.writeText(url).then(() => {
+      addToast(`🔗 Link copied! ${checked.size} items + ${aiSuggested.size} AI sources`, "success");
+    }).catch(() => {
+      // Fallback for browsers without clipboard API
+      window.location.hash = hash;
+      addToast("🔗 URL updated with current state — copy from address bar", "info");
+    });
+  }, [checked, aiSuggested, addToast]);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg }}>
       <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #2980B9 100%)`, padding: "18px 16px", color: "white" }}>
@@ -664,7 +726,11 @@ export default function SaleAdvisor() {
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>Income Property Sale Advisor</h1>
             <p style={{ margin: "4px 0 0", opacity: 0.85, fontSize: 12 }}>10-Phase Checklist · AI Document Analysis · Auto-Fill</p>
           </div>
-          <button onClick={() => { if (confirm("Reset everything?")) { setChecked(new Set()); setDocs([]); setAiSuggested(new Map()); setExtractedValues(new Map()); } }}
+          <button onClick={handleShare}
+            style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", padding: "6px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12, marginRight: 6 }}>
+            🔗 Share
+          </button>
+          <button onClick={() => { if (confirm("Reset everything?")) { setChecked(new Set()); setDocs([]); setAiSuggested(new Map()); setExtractedValues(new Map()); setManualOverrides(new Set()); } }}
             style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", padding: "6px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
             Reset
           </button>
