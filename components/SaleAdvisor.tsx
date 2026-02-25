@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { PHASES, type Phase } from "@/lib/phases";
+import { useChecklist } from "@/lib/supabase/useChecklist";
+import { useDocuments } from "@/lib/supabase/useDocuments";
+import { useAuth } from "@/lib/supabase/useAuth";
 
 const C = {
   navy: "#1B4F72", accent: "#2E86C1", gold: "#D4AC0D",
@@ -538,14 +541,44 @@ function deserializeState(hash: string): {
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 export default function SaleAdvisor() {
+  // ── Auth ────────────────────────────────────────────────────────────────
+  const { user, loading: authLoading } = useAuth();
+
+  // ── Supabase-backed checklist state ─────────────────────────────────────
+  const {
+    checked: checkedObj,
+    toggle: sbToggle,
+    applyAIResults,
+    loading: checklistLoading,
+    syncing,
+  } = useChecklist(); // no propertyId = global checklist
+
+  // Convert object → Set for compatibility with existing UI components
+  const checked = useMemo(() => {
+    const s = new Set<string>();
+    for (const [k, v] of Object.entries(checkedObj)) { if (v) s.add(k); }
+    return s;
+  }, [checkedObj]);
+
+  // ── Supabase-backed document persistence ────────────────────────────────
+  const {
+    docs: savedDocs,
+    loadDocs,
+    saveDoc,
+    updateDoc,
+    loading: docsDbLoading,
+  } = useDocuments();
+
   const [activeTab, setActiveTab] = useState<TabId>("checklist");
-  const [checked, setChecked] = useState<Set<string>>(new Set());
   const [activePhase, setActivePhase] = useState<number | null>(1);
   const [docs, setDocs] = useState<UploadedDoc[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [extractedValues, setExtractedValues] = useState<Map<string, string>>(new Map());
   const [aiSuggested, setAiSuggested] = useState<Map<string, { confidence: number; value: string | null; docName: string }>>(new Map());
   const [manualOverrides, setManualOverrides] = useState<Set<string>>(new Set());
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
+  const isLoading = authLoading || checklistLoading;
 
   const addToast = useCallback((message: string, type: Toast["type"] = "info") => {
     const id = Math.random().toString(36).slice(2);
@@ -553,37 +586,70 @@ export default function SaleAdvisor() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4500);
   }, []);
 
-  // Restore state from URL hash on mount
+  // Load saved docs from Supabase on mount
+  useEffect(() => {
+    if (user && !initialLoaded) {
+      loadDocs().then(() => setInitialLoaded(true));
+    }
+  }, [user, initialLoaded, loadDocs]);
+
+  // Hydrate local docs from saved DB records (for previously analyzed docs)
+  useEffect(() => {
+    if (savedDocs.length > 0 && docs.length === 0 && initialLoaded) {
+      const hydrated: UploadedDoc[] = savedDocs
+        .filter(d => d.status === "done")
+        .map(d => ({
+          id: d.id,
+          name: d.filename,
+          type: (d.file_type || "pdf") as UploadedDoc["type"],
+          size: d.file_size || 0,
+          uploadedAt: new Date(d.created_at),
+          status: "done" as const,
+          applied: d.applied,
+          analysis: d.summary ? {
+            docType: d.doc_type || "unknown",
+            summary: d.summary || "",
+            completedItems: (d.completed_items || []) as AIItem[],
+            keyFindings: (d.key_findings || []) as string[],
+            warnings: (d.warnings || []) as string[],
+          } : undefined,
+        }));
+      if (hydrated.length > 0) {
+        setDocs(hydrated);
+        addToast(`📂 Loaded ${hydrated.length} saved document${hydrated.length > 1 ? "s" : ""} from your account`, "info");
+      }
+    }
+  }, [savedDocs, initialLoaded]);
+
+  // Restore state from URL hash on mount (overrides Supabase if present)
   useEffect(() => {
     const hash = window.location.hash.slice(1);
     if (hash.length > 10) {
       const restored = deserializeState(hash);
       if (restored) {
-        setChecked(restored.checked);
+        // Apply hash items via Supabase hook
+        restored.checked.forEach(id => {
+          if (!checkedObj[id]) sbToggle(id);
+        });
         setAiSuggested(restored.aiSuggested);
         addToast(`🔗 Restored ${restored.checked.size} items from shared link`, "success");
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [checklistLoading]);
 
   const toggle = useCallback((id: string) => {
-    setChecked(prev => {
-      const n = new Set(prev);
-      if (n.has(id)) {
-        n.delete(id);
-        // If this was AI-applied, mark as manual override so reapply doesn't re-check it
-        if (aiSuggested.has(id)) {
-          setManualOverrides(mo => new Set([...mo, id]));
-        }
-      } else {
-        n.add(id);
-        // User manually checked — remove from overrides
-        setManualOverrides(mo => { const nm = new Set(mo); nm.delete(id); return nm; });
+    // Toggle in Supabase (debounced persist)
+    sbToggle(id);
+    // Track manual overrides for AI reapply logic
+    if (checked.has(id)) {
+      if (aiSuggested.has(id)) {
+        setManualOverrides(mo => new Set([...mo, id]));
       }
-      return n;
-    });
-  }, [aiSuggested]);
+    } else {
+      setManualOverrides(mo => { const nm = new Set(mo); nm.delete(id); return nm; });
+    }
+  }, [sbToggle, checked, aiSuggested]);
 
   const pendingBadge = docs.filter(d => d.status === "done" && !d.applied && (d.analysis?.completedItems.length || 0) > 0).length;
 
@@ -623,15 +689,42 @@ export default function SaleAdvisor() {
 
       setDocs(prev => prev.map(d => d.id === docId ? { ...d, status: "done", analysis: data.analysis } : d));
 
+      // Persist document analysis to Supabase
+      const savedRecord = await saveDoc({
+        filename: file.name,
+        file_type: fileType,
+        file_size: file.size,
+        status: "done",
+        analysis: data.analysis,
+        doc_type: data.analysis.docType,
+        summary: data.analysis.summary,
+        key_findings: data.analysis.keyFindings,
+        warnings: data.analysis.warnings,
+        completed_items: data.analysis.completedItems,
+        applied: false,
+      });
+      // Update local doc with Supabase ID for future operations
+      if (savedRecord) {
+        setDocs(prev => prev.map(d => d.id === docId ? { ...d, id: savedRecord.id } : d));
+      }
+
       const count = data.analysis.completedItems?.length || 0;
       addToast(`📄 ${file.name}: ${count} item${count !== 1 ? "s" : ""} identified`, count > 0 ? "success" : "info");
       if (count > 0) setActiveTab("documents");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setDocs(prev => prev.map(d => d.id === docId ? { ...d, status: "error", error: msg } : d));
+      // Save error state to Supabase too
+      saveDoc({
+        filename: file.name,
+        file_type: fileType,
+        file_size: file.size,
+        status: "error",
+        error_message: msg,
+      });
       addToast(`❌ ${file.name}: ${msg}`, "error");
     }
-  }, [addToast]);
+  }, [addToast, saveDoc]);
 
   const handleFiles = useCallback((files: File[]) => files.forEach(f => processFile(f)), [processFile]);
 
@@ -639,13 +732,11 @@ export default function SaleAdvisor() {
     const doc = docs.find(d => d.id === docId);
     if (!doc?.analysis) return;
 
-    setChecked(prev => {
-      const n = new Set(prev);
-      doc.analysis!.completedItems.forEach(ci => {
-        if (!manualOverrides.has(ci.id)) n.add(ci.id);
-      });
-      return n;
-    });
+    // Apply to Supabase via hook (debounced persist)
+    const itemsToApply = doc.analysis.completedItems
+      .filter(ci => !manualOverrides.has(ci.id))
+      .map(ci => ({ id: ci.id, confidence: ci.confidence, extractedValue: ci.extractedValue || undefined }));
+    applyAIResults(itemsToApply);
 
     // Store AI attribution so badges show in checklist after apply
     setAiSuggested(prev => {
@@ -653,7 +744,6 @@ export default function SaleAdvisor() {
       doc.analysis!.completedItems.forEach(ci => {
         if (!manualOverrides.has(ci.id)) {
           const existing = n.get(ci.id);
-          // Higher confidence wins
           if (!existing || ci.confidence > existing.confidence) {
             n.set(ci.id, {
               confidence: ci.confidence,
@@ -675,8 +765,10 @@ export default function SaleAdvisor() {
     });
 
     setDocs(prev => prev.map(d => d.id === docId ? { ...d, applied: true } : d));
+    // Update applied status in Supabase
+    updateDoc(docId, { applied: true });
     addToast(`✅ Applied ${doc.analysis.completedItems.length} items from ${doc.name.slice(0, 25)}`, "success");
-  }, [docs, manualOverrides, addToast]);
+  }, [docs, manualOverrides, addToast, applyAIResults, updateDoc]);
 
   const previewDoc = useCallback((docId: string) => {
     const doc = docs.find(d => d.id === docId);
@@ -719,6 +811,32 @@ export default function SaleAdvisor() {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg }}>
+      {/* Loading overlay */}
+      {isLoading && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(240,244,248,0.95)", zIndex: 9999,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16, animation: "pulse 1.5s ease-in-out infinite" }}>🏠</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.navy, marginBottom: 6 }}>Property360</div>
+          <div style={{ fontSize: 13, color: C.gray }}>Loading your checklist data...</div>
+          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
+        </div>
+      )}
+
+      {/* Sync indicator */}
+      {syncing && (
+        <div style={{
+          position: "fixed", top: 40, right: 16, zIndex: 999,
+          background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+          borderRadius: 8, padding: "5px 12px", fontSize: 11, color: C.blue,
+          display: "flex", alignItems: "center", gap: 6, boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+        }}>
+          <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span> Saving...
+          <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+        </div>
+      )}
+
       <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #2980B9 100%)`, padding: "18px 16px", color: "white" }}>
         <div style={{ maxWidth: 820, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
           <div>
@@ -730,7 +848,7 @@ export default function SaleAdvisor() {
             style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", padding: "6px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12, marginRight: 6 }}>
             🔗 Share
           </button>
-          <button onClick={() => { if (confirm("Reset everything?")) { setChecked(new Set()); setDocs([]); setAiSuggested(new Map()); setExtractedValues(new Map()); setManualOverrides(new Set()); } }}
+          <button onClick={() => { if (confirm("Reset local view? (Saved data in your account remains)")) { setDocs([]); setAiSuggested(new Map()); setExtractedValues(new Map()); setManualOverrides(new Set()); } }}
             style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", padding: "6px 13px", borderRadius: 8, cursor: "pointer", fontSize: 12 }}>
             Reset
           </button>
@@ -748,9 +866,13 @@ export default function SaleAdvisor() {
                 <div style={{ fontSize: 13, color: C.blue, fontWeight: 600 }}>🤖 {aiSuggested.size} AI suggestions — review below or apply all</div>
                 <div style={{ display: "flex", gap: 7 }}>
                   <button onClick={() => {
-                    const nc = new Set(checked); const ne = new Map(extractedValues);
-                    aiSuggested.forEach((s, id) => { nc.add(id); if (s.value) ne.set(id, s.value); });
-                    setChecked(nc); setExtractedValues(ne); setAiSuggested(new Map());
+                    const items = Array.from(aiSuggested.entries()).map(([id, s]) => ({
+                      id, confidence: s.value ? 0.9 : 0.7, extractedValue: s.value || undefined,
+                    }));
+                    applyAIResults(items);
+                    const ne = new Map(extractedValues);
+                    aiSuggested.forEach((s, id) => { if (s.value) ne.set(id, s.value); });
+                    setExtractedValues(ne); setAiSuggested(new Map());
                     addToast(`✅ Applied all ${aiSuggested.size} AI suggestions`, "success");
                   }} style={{ background: C.accent, color: "white", border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Apply All</button>
                   <button onClick={() => setAiSuggested(new Map())} style={{ background: C.white, color: C.gray, border: `1px solid ${C.grayBorder}`, borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 12 }}>Dismiss</button>
