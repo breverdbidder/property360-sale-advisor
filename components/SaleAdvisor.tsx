@@ -286,6 +286,17 @@ function PhaseCard({ phase, checked, onToggle, isActive, onActivate, aiSuggested
                     {isChecked && extracted && (
                       <div style={{ marginTop: 3, fontSize: 11, color: C.green }}>✓ <em>{extracted}</em></div>
                     )}
+                    {isChecked && aiSuggested.has(item.id) && (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 3 }}>
+                        <span style={{
+                          fontSize: 10, padding: "1px 7px", borderRadius: 10,
+                          background: "#DBEAFE", color: "#1D4ED8", fontWeight: 700,
+                          border: "1px solid #BFDBFE", whiteSpace: "nowrap",
+                        }} title={aiSuggested.get(item.id)!.value || "AI detected"}>
+                          🤖 {aiSuggested.get(item.id)!.docName} · {Math.round(aiSuggested.get(item.id)!.confidence * 100)}%
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </label>
               );
@@ -508,8 +519,22 @@ export default function SaleAdvisor() {
   }, []);
 
   const toggle = useCallback((id: string) => {
-    setChecked(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }, []);
+    setChecked(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) {
+        n.delete(id);
+        // If this was AI-applied, mark as manual override so reapply doesn't re-check it
+        if (aiSuggested.has(id)) {
+          setManualOverrides(mo => new Set([...mo, id]));
+        }
+      } else {
+        n.add(id);
+        // User manually checked — remove from overrides
+        setManualOverrides(mo => { const nm = new Set(mo); nm.delete(id); return nm; });
+      }
+      return n;
+    });
+  }, [aiSuggested]);
 
   const pendingBadge = docs.filter(d => d.status === "done" && !d.applied && (d.analysis?.completedItems.length || 0) > 0).length;
 
@@ -564,16 +589,45 @@ export default function SaleAdvisor() {
   const applyDoc = useCallback((docId: string) => {
     const doc = docs.find(d => d.id === docId);
     if (!doc?.analysis) return;
-    setChecked(prev => { const n = new Set(prev); doc.analysis!.completedItems.forEach(ci => n.add(ci.id)); return n; });
-    setAiSuggested(prev => { const n = new Map(prev); doc.analysis!.completedItems.forEach(ci => n.delete(ci.id)); return n; });
-    setExtractedValues(prev => {
-      const n = new Map(prev);
-      doc.analysis!.completedItems.forEach(ci => { if (ci.extractedValue) n.set(ci.id, ci.extractedValue); });
+
+    setChecked(prev => {
+      const n = new Set(prev);
+      doc.analysis!.completedItems.forEach(ci => {
+        if (!manualOverrides.has(ci.id)) n.add(ci.id);
+      });
       return n;
     });
+
+    // Store AI attribution so badges show in checklist after apply
+    setAiSuggested(prev => {
+      const n = new Map(prev);
+      doc.analysis!.completedItems.forEach(ci => {
+        if (!manualOverrides.has(ci.id)) {
+          const existing = n.get(ci.id);
+          // Higher confidence wins
+          if (!existing || ci.confidence > existing.confidence) {
+            n.set(ci.id, {
+              confidence: ci.confidence,
+              value: ci.extractedValue,
+              docName: doc.name.length > 20 ? doc.name.slice(0, 18) + "…" : doc.name,
+            });
+          }
+        }
+      });
+      return n;
+    });
+
+    setExtractedValues(prev => {
+      const n = new Map(prev);
+      doc.analysis!.completedItems.forEach(ci => {
+        if (ci.extractedValue && !manualOverrides.has(ci.id)) n.set(ci.id, ci.extractedValue);
+      });
+      return n;
+    });
+
     setDocs(prev => prev.map(d => d.id === docId ? { ...d, applied: true } : d));
-    addToast(`✅ Applied ${doc.analysis.completedItems.length} items from ${doc.name}`, "success");
-  }, [docs, addToast]);
+    addToast(`✅ Applied ${doc.analysis.completedItems.length} items from ${doc.name.slice(0, 25)}`, "success");
+  }, [docs, manualOverrides, addToast]);
 
   const previewDoc = useCallback((docId: string) => {
     const doc = docs.find(d => d.id === docId);
