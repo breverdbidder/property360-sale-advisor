@@ -1,0 +1,146 @@
+name: Seed Supabase — Case Study Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "seed" to confirm seeding case study data'
+        required: true
+        type: string
+
+jobs:
+  seed-case-study:
+    if: github.event.inputs.confirm == 'seed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Supabase connection
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}")
+          echo "Supabase status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cannot reach Supabase REST API"
+            exit 1
+          fi
+
+      - name: Check for existing case study property
+        id: check
+        run: |
+          EXISTING=$(curl -s \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_properties?id=eq.a1b2c3d4-e5f6-7890-abcd-ef1234567890&select=id" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}")
+          echo "Existing: $EXISTING"
+          if echo "$EXISTING" | grep -q "a1b2c3d4"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get or create test user
+        id: user
+        run: |
+          # Try to get first user from profiles
+          USER_ID=$(curl -s \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_profiles?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['id'] if d else '')" 2>/dev/null || echo "")
+
+          if [ -z "$USER_ID" ]; then
+            echo "::warning::No users found in p360_profiles. Using static UUID for case study."
+            USER_ID="00000000-0000-0000-0000-000000000001"
+          fi
+          echo "user_id=$USER_ID" >> $GITHUB_OUTPUT
+          echo "Using user_id: $USER_ID"
+
+      - name: Insert property (skip if exists)
+        if: steps.check.outputs.exists != 'true'
+        run: |
+          RESULT=$(curl -s -w "\n%{http_code}" \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_properties" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -d '[{
+              "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+              "user_id": "${{ steps.user.outputs.user_id }}",
+              "address": "2750 Malabar Road SE",
+              "city": "Palm Bay",
+              "state": "FL",
+              "zip": "32907",
+              "parcel_id": "29-37-05-00-00142.0-0000",
+              "property_type": "multi_family",
+              "beds": 38,
+              "baths": 22,
+              "sqft": 14400,
+              "year_built": 1986,
+              "lot_size_sqft": 52272,
+              "estimated_value": 1950000.00,
+              "mortgage_payoff": 980000.00,
+              "monthly_rent": 20900.00,
+              "occupancy_status": "partial",
+              "notes": "18-unit case study for system validation",
+              "metadata": {"units": 18, "unit_mix": "6x1BR+8x2BR+4x3BR", "case_study": true}
+            }]')
+          HTTP_CODE=$(echo "$RESULT" | tail -1)
+          BODY=$(echo "$RESULT" | head -n -1)
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin),indent=2))" 2>/dev/null || echo "$BODY"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Failed to insert property"
+            exit 1
+          fi
+
+      - name: Insert document metadata (12 rows)
+        run: |
+          PROPERTY_ID="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+          USER_ID="${{ steps.user.outputs.user_id }}"
+
+          RESULT=$(curl -s -w "\n%{http_code}" \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_documents" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=representation" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "[
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"01_rent_roll_2025.xlsx\",\"file_type\":\"xlsx\",\"status\":\"uploaded\",\"doc_type\":\"rent_roll\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"02_profit_loss_T12.pdf\",\"file_type\":\"pdf\",\"status\":\"uploaded\",\"doc_type\":\"pnl\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"03_inspection_report.pdf\",\"file_type\":\"pdf\",\"status\":\"uploaded\",\"doc_type\":\"inspection\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"04_sample_lease_unit201.docx\",\"file_type\":\"docx\",\"status\":\"uploaded\",\"doc_type\":\"lease\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"05_title_search.pdf\",\"file_type\":\"pdf\",\"status\":\"uploaded\",\"doc_type\":\"title_search\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"06_valuation_comps.xlsx\",\"file_type\":\"xlsx\",\"status\":\"uploaded\",\"doc_type\":\"appraisal\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"07_offering_memorandum.pptx\",\"file_type\":\"pptx\",\"status\":\"uploaded\",\"doc_type\":\"om\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"08_loi_template.docx\",\"file_type\":\"docx\",\"status\":\"uploaded\",\"doc_type\":\"loi\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"09_due_diligence_tracker.xlsx\",\"file_type\":\"xlsx\",\"status\":\"uploaded\",\"doc_type\":\"dd_tracker\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"10_closing_worksheet.xlsx\",\"file_type\":\"xlsx\",\"status\":\"uploaded\",\"doc_type\":\"closing\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"11_proforma_3yr.xlsx\",\"file_type\":\"xlsx\",\"status\":\"uploaded\",\"doc_type\":\"proforma\"},
+              {\"user_id\":\"$USER_ID\",\"property_id\":\"$PROPERTY_ID\",\"filename\":\"12_entity_summary.docx\",\"file_type\":\"docx\",\"status\":\"uploaded\",\"doc_type\":\"entity_docs\"}
+            ]")
+          HTTP_CODE=$(echo "$RESULT" | tail -1)
+          BODY=$(echo "$RESULT" | head -n -1)
+          echo "HTTP $HTTP_CODE"
+          echo "Inserted document rows"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Document insert returned $HTTP_CODE — may need manual review"
+            echo "$BODY"
+          fi
+
+      - name: Verify seeded data
+        run: |
+          echo "=== Property ==="
+          curl -s \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_properties?id=eq.a1b2c3d4-e5f6-7890-abcd-ef1234567890&select=id,address,city,property_type" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin),indent=2))"
+
+          echo "=== Documents ==="
+          curl -s \
+            "${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}/rest/v1/p360_documents?property_id=eq.a1b2c3d4-e5f6-7890-abcd-ef1234567890&select=filename,doc_type,status" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            | python3 -c "import json,sys; docs=json.load(sys.stdin); print(f'{len(docs)} documents seeded'); [print(f'  {d[\"filename\"]} ({d[\"doc_type\"]})') for d in docs]"
