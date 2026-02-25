@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import AuthHeader from "@/components/AuthHeader";
 
-export const runtime = "edge";
 
 export const metadata: Metadata = {
   title: "Property360 Sale Advisor | Mariam Shapira",

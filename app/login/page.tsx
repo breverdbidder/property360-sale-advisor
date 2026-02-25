@@ -4,7 +4,6 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-export const runtime = "edge";
 
 const C = {
   navy: "#1B4F72",

@@ -1,7 +1,7 @@
 // lib/supabase/server.ts
 // Server-side Supabase client for API routes / Server Components
-// Edge-compatible — no Node.js built-ins required
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 export async function createServerSupabaseClient() {
@@ -21,8 +21,7 @@ export async function createServerSupabaseClient() {
               cookieStore.set(name, value, options)
             );
           } catch {
-            // setAll can fail when called from Server Components
-            // This is fine — middleware handles the refresh
+            // setAll can fail in Server Components — middleware handles refresh
           }
         },
       },
@@ -32,7 +31,6 @@ export async function createServerSupabaseClient() {
 
 // Service-role client (for admin operations — NOT exposed to browser)
 export function createServiceClient() {
-  const { createClient } = require("@supabase/supabase-js");
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,

@@ -1,9 +1,8 @@
 // middleware.ts
-// Edge-compatible auth middleware — runs on Cloudflare Workers
+// Auth middleware — protects routes, refreshes sessions
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export const runtime = "edge";
 
 // Routes that don't require authentication
 const PUBLIC_ROUTES = ["/login", "/signup", "/api/auth/callback"];
