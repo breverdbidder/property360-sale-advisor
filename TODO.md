@@ -69,3 +69,21 @@
 - [ ] 8.4 Mark all completed items [x] in this file and push final state
 - [ ] 8.5 Create GitHub Release v1.1.0 with tag "ai-document-intelligence"
 
+
+## CASE STUDY - PRD-P360-002 (Claude Code Task)
+- [ ] CS.1 Create 01_rent_roll_2025.xlsx
+- [ ] CS.2 Create 02_profit_loss_T12.pdf
+- [ ] CS.3 Create 03_inspection_report.pdf
+- [ ] CS.4 Create 04_sample_lease_unit201.docx
+- [ ] CS.5 Create 05_title_search.pdf
+- [ ] CS.6 Create 06_valuation_comps.xlsx
+- [ ] CS.7 Create 07_offering_memorandum.pptx
+- [ ] CS.8 Create 08_loi_template.docx
+- [ ] CS.9 Create 09_due_diligence_tracker.xlsx
+- [ ] CS.10 Create 10_closing_worksheet.xlsx
+- [ ] CS.11 Create 11_proforma_3yr.xlsx
+- [ ] CS.12 Create 12_entity_summary.docx
+- [ ] CS.13 Push all to case-study/palm-bay-18-unit/
+- [ ] CS.14 Insert property + documents to Supabase
+- [ ] CS.15 Validate data consistency across all docs
+- [ ] CS.16 Test AI Document Intelligence Engine
