@@ -19,7 +19,7 @@ interface DocAnalysis {
   completedItems: AIItem[]; keyFindings: string[]; warnings: string[];
 }
 interface UploadedDoc {
-  id: string; name: string; type: "pdf" | "docx" | "xlsx";
+  id: string; name: string; type: "pdf" | "docx" | "xlsx" | "pptx";
   size: number; uploadedAt: Date;
   status: "uploading" | "analyzing" | "done" | "error";
   analysis?: DocAnalysis; error?: string; applied: boolean;
@@ -31,7 +31,7 @@ const ALL_ITEMS = PHASES.flatMap(p => p.items);
 const TOTAL = ALL_ITEMS.length;
 const CRITICAL_TOTAL = ALL_ITEMS.filter(i => i.critical).length;
 const fmtSize = (b: number) => b < 1048576 ? `${(b/1024).toFixed(0)} KB` : `${(b/1048576).toFixed(1)} MB`;
-const docIcon = (t: string) => t === "pdf" ? "📄" : t === "docx" ? "📝" : "📊";
+const docIcon = (t: string) => t === "pdf" ? "📄" : t === "docx" ? "📝" : t === "pptx" ? "📊" : "📋";
 
 async function extractDocContent(file: File): Promise<string> {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
@@ -231,7 +231,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
-    const files = Array.from(e.dataTransfer.files).filter(f => /\.(pdf|docx|xlsx|xls)$/i.test(f.name));
+    const files = Array.from(e.dataTransfer.files).filter(f => /\.(pdf|docx|xlsx|xls|pptx)$/i.test(f.name));
     if (files.length) onFiles(files);
   };
   return (
@@ -240,8 +240,8 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
       style={{ border: `2px dashed ${dragging ? C.accent : C.grayBorder}`, borderRadius: 14, padding: "28px 20px", textAlign: "center", cursor: "pointer", background: dragging ? C.blueLight : C.grayLight, transition: "all 0.2s" }}>
       <div style={{ fontSize: 36, marginBottom: 10 }}>📂</div>
       <div style={{ fontSize: 15, fontWeight: 700, color: C.navy, marginBottom: 5 }}>Drop documents or click to browse</div>
-      <div style={{ fontSize: 12, color: C.gray }}>PDF · DOCX · XLSX · AI will auto-fill your checklist</div>
-      <input ref={inputRef} type="file" accept=".pdf,.docx,.xlsx,.xls" multiple style={{ display: "none" }}
+      <div style={{ fontSize: 12, color: C.gray }}>PDF · DOCX · XLSX · PPTX · AI will auto-fill your checklist</div>
+      <input ref={inputRef} type="file" accept=".pdf,.docx,.xlsx,.xls,.pptx" multiple style={{ display: "none" }}
         onChange={e => { const f = Array.from(e.target.files || []); if (f.length) onFiles(f); e.target.value = ""; }} />
     </div>
   );
@@ -427,6 +427,7 @@ export default function SaleAdvisor() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [extractedValues, setExtractedValues] = useState<Map<string, string>>(new Map());
   const [aiSuggested, setAiSuggested] = useState<Map<string, { confidence: number; value: string | null; docName: string }>>(new Map());
+  const [manualOverrides, setManualOverrides] = useState<Set<string>>(new Set());
 
   const addToast = useCallback((message: string, type: Toast["type"] = "info") => {
     const id = Math.random().toString(36).slice(2);
