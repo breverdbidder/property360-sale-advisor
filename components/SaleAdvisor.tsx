@@ -535,7 +535,17 @@ export default function SaleAdvisor() {
         body: JSON.stringify({ content, fileName: file.name, fileType }),
       });
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Analysis failed");
+      if (!data.success) {
+        const errMsg = data.error || "Analysis failed";
+        // Check for API key configuration error
+        if (errMsg.includes("not configured") || errMsg.includes("ANTHROPIC_API_KEY")) {
+          throw new Error("AI analysis unavailable — ANTHROPIC_API_KEY not set in Cloudflare Pages environment variables");
+        }
+        if (errMsg.includes("429") || errMsg.includes("rate limit")) {
+          throw new Error("AI rate limit reached — please wait 60 seconds and retry");
+        }
+        throw new Error(errMsg);
+      }
 
       setDocs(prev => prev.map(d => d.id === docId ? { ...d, status: "done", analysis: data.analysis } : d));
 
