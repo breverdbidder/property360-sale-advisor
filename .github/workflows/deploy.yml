@@ -1,0 +1,32 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  set-env-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inject ANTHROPIC_API_KEY into Cloudflare Pages
+        env:
+          CF_TOKEN: "_mWiZdUKMcqWFZN1TYq8w0g4i1Pv7WaweEdlpkSZ"
+          CF_ACCOUNT_ID: "83ab3f2fbbabd1a9b01a018fb4efe219"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          curl -s -X PATCH \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/pages/projects/property360-sale-advisor" \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"deployment_configs\": {
+                \"production\": {
+                  \"env_vars\": {
+                    \"ANTHROPIC_API_KEY\": {\"value\": \"$ANTHROPIC_API_KEY\"},
+                    \"NODE_VERSION\": {\"value\": \"20\"}
+                  },
+                  \"compatibility_date\": \"2025-01-01\",
+                  \"compatibility_flags\": [\"nodejs_compat\"]
+                }
+              }
+            }" | python3 -c "import json,sys; d=json.load(sys.stdin); print('CF env set:', 'success' if d.get('success') else d.get('errors'))"
