@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import AuthHeader from "@/components/AuthHeader";
+
 export const runtime = "edge";
 
 export const metadata: Metadata = {
@@ -10,6 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f8f9fa" }}>
+        <AuthHeader />
         {children}
       </body>
     </html>
