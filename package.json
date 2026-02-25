@@ -1,0 +1,23 @@
+{
+  "name": "property360-sale-advisor",
+  "version": "1.0.0",
+  "description": "Income-Producing Property Sale Advisor — Property360 x Mariam Shapira",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy": "npx @cloudflare/next-on-pages"
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/next-on-pages": "^1.0.0",
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}
