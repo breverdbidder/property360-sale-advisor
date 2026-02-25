@@ -35,30 +35,102 @@ const docIcon = (t: string) => t === "pdf" ? "📄" : t === "docx" ? "📝" : t 
 
 async function extractDocContent(file: File): Promise<string> {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
+
+  // ── PPTX ──────────────────────────────────────────────────────────────────
+  if (ext === "pptx") {
+    try {
+      const JSZip = (await import("jszip")).default;
+      const buf = await file.arrayBuffer();
+      const zip = await JSZip.loadAsync(buf);
+      const slideFiles = Object.keys(zip.files)
+        .filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f))
+        .sort((a, b) => {
+          const na = parseInt(a.match(/\d+/)?.[0] || "0");
+          const nb = parseInt(b.match(/\d+/)?.[0] || "0");
+          return na - nb;
+        });
+      const texts: string[] = [];
+      for (const sf of slideFiles) {
+        const xml = await zip.files[sf].async("text");
+        // Extract text from <a:t> tags (DrawingML text runs)
+        const matches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
+        const slideText = matches
+          .map(m => m.replace(/<[^>]+>/g, "").trim())
+          .filter(t => t.length > 0)
+          .join(" ");
+        if (slideText.length > 5) texts.push(`[Slide ${texts.length + 1}] ${slideText}`);
+      }
+      if (texts.length === 0) return `[PowerPoint: ${file.name} — no text extracted]`;
+      return `[PowerPoint: ${file.name} — ${texts.length} slides]\n\n${texts.join("\n\n").slice(0, 12000)}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "parse error";
+      return `[PPTX parse failed: ${file.name} — ${msg}]`;
+    }
+  }
+
+  // ── XLSX / XLS ─────────────────────────────────────────────────────────────
+  if (ext === "xlsx" || ext === "xls") {
+    try {
+      const XLSX = await import("xlsx");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const parts: string[] = [`[Excel: ${file.name} — ${wb.SheetNames.length} sheet(s)]`];
+
+      for (const sheetName of wb.SheetNames) {
+        const ws = wb.Sheets[sheetName];
+        if (!ws || !ws["!ref"]) continue;
+
+        // Try to detect rent roll pattern
+        const headers: string[] = [];
+        const range = XLSX.utils.decode_range(ws["!ref"]!);
+        for (let C2 = range.s.c; C2 <= Math.min(range.e.c, 15); C2++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: range.s.r, c: C2 })];
+          if (cell?.v) headers.push(String(cell.v).toLowerCase());
+        }
+        const isRentRoll = headers.some(h => h.includes("unit") || h.includes("tenant") || h.includes("rent") || h.includes("lease"));
+
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        if (csv.trim().length < 3) continue;
+
+        if (isRentRoll) {
+          parts.push(`Sheet "${sheetName}" [RENT ROLL DETECTED — columns: ${headers.slice(0,8).join(", ")}]\n${csv.slice(0, 4000)}`);
+        } else {
+          parts.push(`Sheet "${sheetName}"\n${csv.slice(0, 3000)}`);
+        }
+      }
+      return parts.join("\n\n---\n\n").slice(0, 12000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "parse error";
+      return `[Excel parse failed: ${file.name} — ${msg}]`;
+    }
+  }
+
+  // ── DOCX ───────────────────────────────────────────────────────────────────
   if (ext === "docx") {
     try {
       const mammoth = await import("mammoth");
       const buf = await file.arrayBuffer();
       const res = await mammoth.extractRawText({ arrayBuffer: buf });
-      return res.value;
-    } catch { return `[DOCX: ${file.name}]`; }
+      if (!res.value || res.value.trim().length < 10) return `[DOCX: ${file.name} — no text extracted]`;
+      return res.value.slice(0, 12000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "parse error";
+      return `[DOCX parse failed: ${file.name} — ${msg}]`;
+    }
   }
-  if (ext === "xlsx" || ext === "xls") {
-    return new Promise(resolve => {
-      const r = new FileReader();
-      r.onload = e => resolve(`[Excel: ${file.name}]\n${String(e.target?.result || "").slice(0, 5000)}`);
-      r.readAsText(file);
-    });
-  }
-  // PDF — base64
+
+  // ── PDF — send as base64 for Claude vision ─────────────────────────────────
   return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = e => {
-      const b64 = (e.target?.result as string)?.split(",")[1] || "";
-      resolve(`__PDF_BASE64__:${b64.slice(0, 80000)}`);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const b64 = dataUrl?.split(",")[1] || "";
+      if (!b64) { resolve(`[PDF: ${file.name} — could not read]`); return; }
+      // Claude handles up to ~50 pages; truncate base64 at ~4MB raw
+      resolve(`__PDF_BASE64__:${b64.slice(0, 4_000_000)}`);
     };
-    r.onerror = reject;
-    r.readAsDataURL(file);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(file);
   });
 }
 
