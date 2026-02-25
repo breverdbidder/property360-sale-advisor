@@ -515,7 +515,12 @@ export default function SaleAdvisor() {
 
   const processFile = useCallback(async (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase() || "";
-    const fileType = (ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : "xlsx") as UploadedDoc["type"];
+    // File size guard — 10MB max
+    if (file.size > 10 * 1024 * 1024) {
+      addToast(`❌ ${file.name} exceeds 10MB limit (${fmtSize(file.size)})`, "error");
+      return;
+    }
+    const fileType = (ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : ext === "pptx" ? "pptx" : "xlsx") as UploadedDoc["type"];
     const docId = Math.random().toString(36).slice(2);
 
     setDocs(prev => [{ id: docId, name: file.name, type: fileType, size: file.size, uploadedAt: new Date(), status: "uploading", applied: false }, ...prev]);
