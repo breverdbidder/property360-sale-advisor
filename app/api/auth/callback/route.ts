@@ -4,6 +4,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
 
+export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -36,6 +37,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Auth error → redirect to login with error
   return NextResponse.redirect(`${origin}/login?error=auth_failed`);
 }
