@@ -3,7 +3,7 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export const runtime = "edge";
+// NOTE: Middleware always runs on edge runtime in Next.js — do NOT export runtime here
 
 // Routes that don't require authentication
 const PUBLIC_ROUTES = ["/login", "/signup", "/api/auth/callback", "/api/analyze", "/api/health"];
@@ -11,7 +11,6 @@ const PUBLIC_ROUTES = ["/login", "/signup", "/api/auth/callback", "/api/analyze"
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip auth check for public routes, static assets, and API routes
   if (
     PUBLIC_ROUTES.some((r) => pathname.startsWith(r)) ||
     pathname.startsWith("/_next") ||
@@ -48,12 +47,10 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh the session (important for token rotation)
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Not authenticated → redirect to login
   if (!user) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
@@ -65,7 +62,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match all routes except static files
     "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
