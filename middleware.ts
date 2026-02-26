@@ -3,14 +3,15 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+export const runtime = "edge";
 
 // Routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/signup", "/api/auth/callback"];
+const PUBLIC_ROUTES = ["/login", "/signup", "/api/auth/callback", "/api/analyze", "/api/health"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Skip auth check for public routes and static assets
+  // Skip auth check for public routes, static assets, and API routes
   if (
     PUBLIC_ROUTES.some((r) => pathname.startsWith(r)) ||
     pathname.startsWith("/_next") ||
@@ -64,7 +65,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match all routes except static files and API health
-    "/((?!_next/static|_next/image|favicon.ico|api/health).*)",
+    // Match all routes except static files
+    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
